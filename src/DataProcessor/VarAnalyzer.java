@@ -6,6 +6,10 @@ import com.github.javaparser.ast.visitor.VoidVisitorAdapter;
 import com.github.javaparser.ast.expr.MethodCallExpr;
 import com.github.javaparser.ast.expr.NameExpr;
 import com.github.javaparser.ast.body.VariableDeclarator;
+import com.google.gson.Gson;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.util.Set;
 
 import java.io.File;
 import java.io.IOException;
@@ -20,8 +24,8 @@ import java.util.regex.Matcher;
 public class VarAnalyzer {
     public static void main(String[] args) {
         String projectName = "activemq-activemq-5.16.0";
-        String inputFolderPath = "../RealDatasets/" + projectName;
-        String outputFolderPath = "../RealDatasets/processed/" + projectName;
+        String inputFolderPath = "" + projectName;
+        String outputFolderPath = "" + projectName;
         File outputFolder = new File(outputFolderPath);
 
         if (!outputFolder.exists()) {
@@ -36,7 +40,7 @@ public class VarAnalyzer {
         JavaParser javaParser = new JavaParser();
         Pattern PATTERN = Pattern.compile("(?i)(?:log(?:ger)?\\w*)\\s*\\.\\s*(?:log|error|info|warn|fatal|debug|trace|off|all)\\s*\\([^;]*\\);", Pattern.DOTALL);
         Path inputDirPath = Paths.get(inputFolderPath);
-        IdentifierVisitor identifierVisitor = new IdentifierVisitor(outputFolderPath, "javaFileName");
+
 
         try (Stream<Path> paths = Files.walk(inputDirPath)) {
             paths.filter(Files::isRegularFile)
@@ -53,6 +57,7 @@ public class VarAnalyzer {
                                     if (compilationUnit != null) {
                                         Path relativePath = inputDirPath.relativize(javaFilePath);
                                         String javaFileName = relativePath.toString().replace(".java", "").replace("/", "_");
+                                        IdentifierVisitor identifierVisitor = new IdentifierVisitor(outputFolderPath, javaFileName);
                                         identifierVisitor.setJavaFileName(javaFileName); // 设置javaFileName
                                         identifierVisitor.visit(compilationUnit, null);
                                     }
@@ -83,6 +88,7 @@ public class VarAnalyzer {
 
         public void visit(MethodDeclaration methodDeclaration, Void arg) {
             super.visit(methodDeclaration, arg);
+            String methodName = methodDeclaration.getNameAsString();
             Set<String> methodVariables = new HashSet<>();
             Optional<MethodCallExpr> firstLogCallOptional = Optional.empty();
 
@@ -103,7 +109,20 @@ public class VarAnalyzer {
                 firstLogCall.findAll(NameExpr.class).forEach(nameExpr -> logVariables.add(nameExpr.getNameAsString()));
 
                 // Add a new triplet with the method code, method variables, and log variables
-                triplets.add(new Triplet(javaFileName, methodDeclaration.toString(), methodVariables, logVariables));
+                Triplet triplet = new Triplet(javaFileName, methodDeclaration.toString(), methodVariables, logVariables);
+                triplets.add(triplet);
+                Gson gson = new Gson();
+                // 将Triplet对象转换为JSON格式
+                String json = gson.toJson(triplet);
+                Path outputFile = Paths.get(outputFolderPath, javaFileName+"_"+methodName + ".json");
+                // 将JSON字符串写入文件
+                try {
+                        //FileWriter writer = new FileWriter(outputFile)) {
+                    //writer.write(json);
+                        Files.write(outputFile, json.getBytes());
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
             }
         }
 
@@ -129,6 +148,5 @@ public class VarAnalyzer {
             this.methodVariables = methodVariables;
             this.logVariables = logVariables;
         }
-
     }
 }
