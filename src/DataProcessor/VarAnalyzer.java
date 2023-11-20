@@ -27,7 +27,7 @@ import java.util.regex.Matcher;
 
 public class VarAnalyzer {
     public static void main(String[] args) {
-        String projectName = "activemq-activemq-5.16.0";
+        String projectName = "synapse-Apache-Synapse-3.0.1";
         String inputFolderPath = "" + projectName;
         String outputFolderPath = "" + projectName;
         File outputFolder = new File(outputFolderPath);
@@ -112,26 +112,34 @@ public class VarAnalyzer {
                 block.findAll(VariableDeclarator.class).forEach(var -> methodVariables.add(var.getNameAsString()));
             });
 
-
             // Find the first log call in the method
             List<MethodCallExpr> logCalls = methodDeclaration.findAll(MethodCallExpr.class, this::isLogMethod);
-            if (!logCalls.isEmpty()) {
-                firstLogCallOptional = Optional.of(logCalls.get(0));
-            }
-
-            // If a log statement exists
-            if (firstLogCallOptional.isPresent()) {
-                MethodCallExpr firstLogCall = firstLogCallOptional.get();
+            for (MethodCallExpr logCall : logCalls) {
                 Set<String> logVariables = new HashSet<>();
 
                 // Find all variables in the log statement
-                firstLogCall.findAll(MethodCallExpr.class).forEach(methodCallExpr -> {
+                logCall.findAll(MethodCallExpr.class).forEach(methodCallExpr -> {
                     for (Expression argument : methodCallExpr.getArguments()) {
                         if (argument instanceof NameExpr) {
                             logVariables.add(((NameExpr) argument).getNameAsString());
                         }
                     }
                 });
+
+                // If the log statement has no variables, continue to the next log statement
+                if (logVariables.isEmpty()){
+                    continue;
+                }
+                boolean flag = false;
+                for (String logVariable : logVariables) {
+                    if (!methodVariables.contains(logVariable)) {
+                        flag = true;
+                    }
+                }
+
+                if (flag) {
+                    continue;
+                }
 
                 // Add a new triplet with the method code, method variables, and log variables
                 Triplet triplet = new Triplet(javaFileName, methodDeclaration.toString(), methodVariables, logVariables);
@@ -140,14 +148,16 @@ public class VarAnalyzer {
                 String json = gson.toJson(triplet);
                 Path outputFile = Paths.get(outputFolderPath, javaFileName+"_"+methodName + ".json");
                 try {
-                        //FileWriter writer = new FileWriter(outputFile)) {
-                    //writer.write(json);
                     Files.write(outputFile, json.getBytes());
                 } catch (IOException e) {
                     e.printStackTrace();
                 }
+
+                // If a log variable is found, skip to the next method
+                break;
             }
         }
+
 
         private boolean isLogMethod(MethodCallExpr methodCallExpr) {
             if (methodCallExpr.getScope().isPresent()) {
