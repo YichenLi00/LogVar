@@ -1,7 +1,11 @@
 import com.github.javaparser.JavaParser;
 import com.github.javaparser.ParseResult;
 import com.github.javaparser.ast.CompilationUnit;
+import com.github.javaparser.ast.Node;
+import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration;
 import com.github.javaparser.ast.body.MethodDeclaration;
+import com.github.javaparser.ast.expr.Expression;
+import com.github.javaparser.ast.stmt.BlockStmt;
 import com.github.javaparser.ast.visitor.VoidVisitorAdapter;
 import com.github.javaparser.ast.expr.MethodCallExpr;
 import com.github.javaparser.ast.expr.NameExpr;
@@ -92,7 +96,22 @@ public class VarAnalyzer {
             Set<String> methodVariables = new HashSet<>();
             Optional<MethodCallExpr> firstLogCallOptional = Optional.empty();
 
+            // Find variables in method parameters
+            methodDeclaration.getParameters().forEach(param -> methodVariables.add(param.getNameAsString()));
+
+            // Find variables in method body
             methodDeclaration.findAll(VariableDeclarator.class).forEach(var -> methodVariables.add(var.getNameAsString()));
+
+            // Find variables in inner classes/anonymous classes
+            methodDeclaration.findAll(ClassOrInterfaceDeclaration.class).forEach(innerClass -> {
+                innerClass.findAll(VariableDeclarator.class).forEach(var -> methodVariables.add(var.getNameAsString()));
+            });
+
+            // Find variables in blocks
+            methodDeclaration.findAll(BlockStmt.class).forEach(block -> {
+                block.findAll(VariableDeclarator.class).forEach(var -> methodVariables.add(var.getNameAsString()));
+            });
+
 
             // Find the first log call in the method
             List<MethodCallExpr> logCalls = methodDeclaration.findAll(MethodCallExpr.class, this::isLogMethod);
@@ -106,20 +125,24 @@ public class VarAnalyzer {
                 Set<String> logVariables = new HashSet<>();
 
                 // Find all variables in the log statement
-                firstLogCall.findAll(NameExpr.class).forEach(nameExpr -> logVariables.add(nameExpr.getNameAsString()));
+                firstLogCall.findAll(MethodCallExpr.class).forEach(methodCallExpr -> {
+                    for (Expression argument : methodCallExpr.getArguments()) {
+                        if (argument instanceof NameExpr) {
+                            logVariables.add(((NameExpr) argument).getNameAsString());
+                        }
+                    }
+                });
 
                 // Add a new triplet with the method code, method variables, and log variables
                 Triplet triplet = new Triplet(javaFileName, methodDeclaration.toString(), methodVariables, logVariables);
                 triplets.add(triplet);
                 Gson gson = new Gson();
-                // 将Triplet对象转换为JSON格式
                 String json = gson.toJson(triplet);
                 Path outputFile = Paths.get(outputFolderPath, javaFileName+"_"+methodName + ".json");
-                // 将JSON字符串写入文件
                 try {
                         //FileWriter writer = new FileWriter(outputFile)) {
                     //writer.write(json);
-                        Files.write(outputFile, json.getBytes());
+                    Files.write(outputFile, json.getBytes());
                 } catch (IOException e) {
                     e.printStackTrace();
                 }
@@ -127,8 +150,15 @@ public class VarAnalyzer {
         }
 
         private boolean isLogMethod(MethodCallExpr methodCallExpr) {
-            String methodCall = methodCallExpr.toString();
-            return methodCall.matches("(?i)(?:log(?:ger)?\\w*)\\s*\\.\\s*(?:log|error|info|warn|fatal|debug|trace|off|all)\\s*\\([^;]*\\);");
+            if (methodCallExpr.getScope().isPresent()) {
+                String scope = methodCallExpr.getScope().get().toString();
+                String methodName = methodCallExpr.getName().asString();
+
+                return scope.matches("(?i)log(?:ger)?\\w*") &&
+                        methodName.matches("(?i)(log|error|info|warn|fatal|debug|trace|off|all)");
+            }
+
+            return false;
         }
 
         public List<Triplet> getTriplets() {
